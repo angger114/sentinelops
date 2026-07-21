@@ -1,6 +1,8 @@
 name: sentinelops-cicd
 on:
   push:
+    paths:
+      - 'appspec/**'
     branches: [ main ]
   workflow_dispatch:
 
