@@ -1,0 +1,11 @@
+# CodeDeploy AppSpec for Blue/Green traffic shift of sentinel-fn-remediate:live.
+# CurrentVersion/TargetVersion are substituted by the CI/CD pipeline at deploy time.
+version: 0.0
+Resources:
+  - remediateFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Name: "sentinel-fn-remediate"
+        Alias: "live"
+        CurrentVersion: "CURRENT_VERSION"
+        TargetVersion: "TARGET_VERSION"

@@ -1,0 +1,5 @@
+{
+  "taskToken": "PASTE_TASK_TOKEN_FROM_SQS_HERE",
+  "decision": "APPROVED",
+  "reviewer": "angger"
+}

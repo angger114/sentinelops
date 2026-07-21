@@ -1,0 +1,9 @@
+{
+  "source": "manual",
+  "findingId": "SEC-DEMO0001",
+  "detail": {
+    "resourceType": "S3Bucket",
+    "resourceId": "sentinel-target-angger26",
+    "awsRegion": "us-east-1"
+  }
+}

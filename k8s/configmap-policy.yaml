@@ -1,0 +1,22 @@
+# Compliance policy-as-code (OPA/Rego), mounted into the scan Job at /policy.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-policy
+  namespace: sentinel
+data:
+  compliance.rego: |
+    package compliance
+
+    # A resource is non-compliant if it is publicly exposed or unencrypted.
+    deny[msg] {
+      some i
+      input[i].public == true
+      msg := sprintf("resource %s is publicly exposed", [input[i].resourceId])
+    }
+
+    deny[msg] {
+      some i
+      input[i].encrypted == false
+      msg := sprintf("resource %s is not encrypted", [input[i].resourceId])
+    }
