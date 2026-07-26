@@ -1,0 +1,61 @@
+
+Parameters:
+  orchestratorArn:
+    Type: String
+    Default: "arn:aws:states:us-east-1:153468302364:stateMachine:sentinel-remediation-orchestrator"
+
+Resources:
+  ssmOrchestratorArn:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/sentinel/stepfunctions/orchestrator_arn"
+        Type: String
+        Value: !Ref orchestratorArn
+
+  customEventBus: 
+    Type: AWS::Events::EventBus
+    Properties: 
+        Name: "sentinel-bus"
+  
+  RemediationCompleteRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Name: sentinel-rule-remediation-complete
+      EventBusName: !Ref customEventBus
+      EventPattern: 
+        source: ["sentinelops.orchestrator"]
+        detail-type: ["RemediationCompleted"]
+      State: "ENABLED"
+      Targets: 
+        - Arn: !ImportValue reportFnArn
+          Id: "report"
+        - Arn: !ImportValue alertsTopicArn
+          Id: "alerts"
+
+  permReportEvents:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !ImportValue reportFnArn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RemediationCompleteRule.Arn
+
+  nightlySweepSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: sentinel-nightly-sweep
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "cron(0 18 * * ? *)"
+      Target:
+        Arn: !GetAtt ssmOrchestratorArn.Value
+        RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+        Input: |
+          {
+            "source": "nightly-sweep",
+            "findingId": "SEC-NIGHTLY",
+            "detail": {
+              "resourceType": "S3Bucket",
+              "resourceId": "sentinel-target-angger26"
+            } 
+          }

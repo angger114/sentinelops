@@ -1,0 +1,69 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "BuildEnvelope",
+  "States": {
+    "BuildEnvelope": {
+      "Type": "Pass",
+      "Parameters": {
+        "finding.$": "$.ingest.finding",
+        "classification.$": "$.classification",
+        "correlationId.$": "States.UUID()",
+        "checks.$": "States.Array('encryption', 'public-access', 'tagging', 'logging')"
+      },
+      "Next": "EncrichEachDimension"
+    },
+    "EncrichEachDimension": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "Enrich",
+        "States": {
+          "Enrich": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "Payload.$": "$",
+              "FunctionName": "arn:aws:lambda:us-east-1:153468302364:function:sentinel-fn-enrich:$LATEST"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "End": true,
+            "OutputPath": "$.Payload"
+          }
+        }
+      },
+      "Next": "MergeResult",
+      "MaxConcurrency": 4,
+      "ItemsPath": "$.checks",
+      "ItemSelector": {
+        "dimension.$": "$$.Map.Item.Value",
+        "finding.$": "$.finding",
+        "classification.$": "$.classification",
+        "correlationId.$": "$.correlationId"
+      },
+      "ResultPath": "$.dimensions"
+    },
+    "MergeResult": {
+      "Type": "Pass",
+      "End": true,
+      "Parameters": {
+        "correlationId.$": "$.correlationId",
+        "context.$": "States.JsonMerge($.finding, $.classification, false)",
+        "dimensions.$": "$.dimensions",
+        "dimensionCount.$": "States.ArrayLength($.dimensions)"
+      }
+    }
+  },
+  "QueryLanguage": "JSONPath"
+}

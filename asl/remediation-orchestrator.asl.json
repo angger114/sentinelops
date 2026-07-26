@@ -1,0 +1,548 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "IngestFinding",
+  "States": {
+    "IngestFinding": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "arn:aws:lambda:us-east-1:153468302364:function:sentinel-fn-ingest:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL",
+          "MaxDelaySeconds": 15
+        }
+      ],
+      "Next": "DuplicateChoice",
+      "ResultPath": "$.ingest",
+      "ResultSelector": {
+        "finding.$": "$.Payload.finding",
+        "isDuplicate.$": "$.Payload.isDuplicate"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ]
+    },
+    "DuplicateChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "DuplicateSucceed",
+          "Variable": "$.ingest.isDuplicate",
+          "BooleanEquals": true
+        }
+      ],
+      "Default": "ClassifySeverity"
+    },
+    "DuplicateSucceed": {
+      "Type": "Succeed"
+    },
+    "ClassifySeverity": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "arn:aws:lambda:us-east-1:153468302364:function:sentinel-fn-classify:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "InputPath": "$.ingest.finding",
+      "Next": "ParallelIntake",
+      "ResultPath": "$.classification",
+      "ResultSelector": {
+        "severity.$": "$.Payload.severity",
+        "score.$": "$.Payload.score",
+        "requiresApproval.$": "$.Payload.requiresApproval"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ]
+    },
+    "ParallelIntake": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "EnrichContext",
+          "States": {
+            "EnrichContext": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::states:startExecution.sync:2",
+              "Parameters": {
+                "StateMachineArn": "arn:aws:states:us-east-1:153468302364:stateMachine:sentinel-enrichment-express",
+                "Input.$": "$"
+              },
+              "End": true,
+              "ResultSelector": {
+                "enrichment.$": "$.Output"
+              }
+            }
+          }
+        },
+        {
+          "StartAt": "QueryResourceHistory",
+          "States": {
+            "QueryResourceHistory": {
+              "Type": "Task",
+              "Parameters": {
+                "TableName": "sentinel-findings",
+                "IndexName": "resource-index",
+                "KeyConditionExpression": "resourceId = :rid",
+                "ExpressionAttributeValues": {
+                  ":rid": {
+                    "S.$": "$.ingest.finding.resourceId"
+                  }
+                },
+                "Select": "COUNT"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "Next": "HistorySkipped"
+                }
+              ],
+              "End": true,
+              "ResultSelector": {
+                "priorIncidents.$": "$.Count"
+              }
+            },
+            "HistorySkipped": {
+              "Type": "Pass",
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "ScanResource",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ],
+      "ResultPath": "$.parallel",
+      "ResultSelector": {
+        "enrichment.$": "$[0].enrichment",
+        "history.$": "$[1]"
+      }
+    },
+    "ScanResource": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "ItemProcessor",
+        "States": {
+          "ItemProcessor": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+              "Payload.$": "$",
+              "FunctionName": "arn:aws:lambda:us-east-1:153468302364:function:sentinel-fn-compliance:$LATEST"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "Label": "ScanResource",
+      "MaxConcurrency": 5,
+      "ItemBatcher": {
+        "MaxItemsPerBatch": 10,
+        "BatchInput": {
+          "findingId.$": "$.ingest.finding.findingId",
+          "severity.$": "$.classification.severity"
+        }
+      },
+      "ToleratedFailurePercentage": 20,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ],
+      "Next": "ApprovalChoice",
+      "ItemReader": {
+        "Resource": "arn:aws:states:::s3:getObject",
+        "ReaderConfig": {
+          "InputType": "JSON"
+        },
+        "Parameters": {
+          "Bucket": "sentinel-scan-input-angger26",
+          "Key.$": "States.Format('inventory/{}.json', $.ingest.finding.findingId)"
+        }
+      },
+      "ResultWriter": {
+        "Resource": "arn:aws:states:::s3:putObject",
+        "Parameters": {
+          "Bucket": "sentinel-artifacts-angger26",
+          "Prefix.$": "States.Format('scan-result/{}', $.ingest.finding.findingId)"
+        }
+      },
+      "ResultPath": "$.scan"
+    },
+    "ApprovalChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "AwaitApproval",
+          "Or": [
+            {
+              "Or": [
+                {
+                  "Variable": "$.classification.severity",
+                  "StringEquals": "CRITICAL"
+                },
+                {
+                  "And": [
+                    {
+                      "Variable": "$.classification.severity",
+                      "StringEquals": "HIGH"
+                    },
+                    {
+                      "Variable": "$.classification.requiresApproval",
+                      "BooleanEquals": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "Default": "Remediate"
+    },
+    "AwaitApproval": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "https://sqs.us-east-1.amazonaws.com/153468302364/sentinel-approval-queue",
+        "MessageBody": {
+          "taskToken.$": "$$.Task.Token",
+          "findingId.$": "$.ingest.finding.findingId",
+          "severity.$": "$.classification.severity",
+          "resourceType.$": "$.ingest.finding.resourceType",
+          "executionId.$": "$$.Execution.Id"
+        }
+      },
+      "Next": "ApprovalDecision",
+      "TimeoutSeconds": 3600,
+      "HeartbeatSeconds": 900,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout"
+          ],
+          "Next": "QuarantineAndAlert"
+        },
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "QuarantineAndAlert"
+        }
+      ],
+      "ResultPath": "$.approval"
+    },
+    "QuarantineAndAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "sentinel-findings",
+        "Key": {
+          "pk": {
+            "S.$": "States.Format('FINDING#{}', $.ingest.finding.findingId)"
+          },
+          "sk": {
+            "S": "SNAPSHOT"
+          }
+        },
+        "UpdateExpression": "SET #s = :statusVal",
+        "ExpressionAttributeNames": {
+          "#s": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":statusVal": {
+            "S": "QUARANTINED"
+          }
+        }
+      },
+      "Next": "NotifyQuarantine",
+      "ResultPath": null,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ]
+    },
+    "NotifyQuarantine": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:153468302364:sentinel-alerts-topic",
+        "Subject": "[SentinelOps] MANUAL ACTION REQUIRED: Finding Quarantined",
+        "Message.$": "States.Format('Finding {} was quarantined.', $.ingest.finding.findingId)"
+      },
+      "Next": "WorkflowQuarantined",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "OrderFailed"
+        }
+      ],
+      "ResultPath": null
+    },
+    "ApprovalDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.approval.decision",
+          "StringEquals": "APPROVED",
+          "Next": "SafetyBackupChoice"
+        }
+      ],
+      "Default": "QuarantineAndAlert"
+    },
+    "SafetyBackupChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "StartSafetyBackup",
+          "Variable": "$.classification.severity",
+          "StringEquals": "CRITICAL"
+        }
+      ],
+      "Default": "Remediate"
+    },
+    "StartSafetyBackup": {
+      "Type": "Task",
+      "Parameters": {
+        "BackupVaultName": "sentinel-vault",
+        "IamRoleArn": "arn:aws:iam::153468302364:role/LabRole",
+        "ResourceArn": "arn:aws:dynamodb:us-east-1:153468302364:table/sentinel-findings",
+        "IdempotencyToken.$": "States.UUID()"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:backup:startBackupJob",
+      "ResultPath": "$.backup",
+      "ResultSelector": {
+        "backupJobId.$": "$.BackupJobId"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "QuarantineAndAlert"
+        }
+      ],
+      "Next": "WaitForBackup"
+    },
+    "WaitForBackup": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "GetBackupStatus"
+    },
+    "GetBackupStatus": {
+      "Type": "Task",
+      "Parameters": {
+        "BackupJobId.$": "$.backup.backupJobId"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:backup:describeBackupJob",
+      "ResultSelector": {
+        "state.$": "$.State"
+      },
+      "ResultPath": "$.backupStatus",
+      "Next": "BackupStatusChoice"
+    },
+    "BackupStatusChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Remediate",
+          "Variable": "$.backupStatus.state",
+          "StringEquals": "COMPLETED"
+        },
+        {
+          "Next": "WaitForBackup",
+          "Or": [
+            {
+              "Variable": "$.backupStatus.state",
+              "StringEquals": "CREATED"
+            },
+            {
+              "Variable": "$.backupStatus.state",
+              "StringEquals": "PENDING"
+            },
+            {
+              "Variable": "$.backupStatus.state",
+              "StringEquals": "RUNNING"
+            }
+          ]
+        }
+      ],
+      "Default": "QuarantineAndAlert"
+    },
+    "Remediate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:153468302364:function:sentinel-fn-remediate:live",
+        "Payload": {
+          "finding.$": "$.ingest.finding",
+          "classification.$": "$.classification"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL",
+          "MaxDelaySeconds": 30
+        },
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "BackoffRate": 2,
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "QuarantineAndAlert"
+        }
+      ],
+      "Next": "RecordOutcome"
+    },
+    "RecordOutcome": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "sentinel-findings",
+        "Key": {
+          "pk": {
+            "S.$": "States.Format('FINDING#{}', $.ingest.finding.findingId)"
+          },
+          "sk": {
+            "S": "SNAPSHOT"
+          }
+        },
+        "UpdateExpression": "SET #s = :statusVal",
+        "ExpressionAttributeNames": {
+          "#s": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":statusVal": {
+            "S": "REMEDIATED"
+          }
+        }
+      },
+      "Next": "EmitCompletionEvent"
+    },
+    "EmitCompletionEvent": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Parameters": {
+        "Entries": [
+          {
+            "DetailType": "RemediationCompleted",
+            "EventBusName": "sentinel-bus",
+            "Source": "sentinelops.orchestrator"
+          }
+        ]
+      },
+      "Next": "NotifySuccess"
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:153468302364:sentinel-alerts-topic",
+        "Subject.$": "States.Format('[SentinelOps] {} remediated ({})', $.ingest.finding.findingId, $.classification.severity)",
+        "Message.$": "States.Format('Finding {} on {} has been remediated.', $.ingest.finding.findingId, $.ingest.finding.resourceId)"
+      },
+      "End": true,
+      "ResultPath": null
+    },
+    "WorkflowQuarantined": {
+      "Type": "Fail",
+      "Error": "RemediationQuarantined",
+      "Cause": "Finding required manual intervention."
+    },
+    "OrderFailed": {
+      "Type": "Fail",
+      "Error": "OrchestratorFailed",
+      "Cause": "Unrecoverable error."
+    }
+  },
+  "QueryLanguage": "JSONPath"
+}

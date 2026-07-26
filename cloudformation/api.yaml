@@ -1,0 +1,253 @@
+
+
+Resources:
+  restApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: sentinel-api
+
+  findingsResource: 
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt restApi.RootResourceId
+      PathPart: findings
+      RestApiId: !Ref restApi
+
+
+  approvalResource: 
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt restApi.RootResourceId
+      PathPart: approval
+      RestApiId: !Ref restApi
+
+  reportResource: 
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt restApi.RootResourceId
+      PathPart: report
+      RestApiId: !Ref restApi
+
+  findingsPOSTMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref findingsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ingestFnArn}/invocations
+        - ingestFnArn: !ImportValue ingestFnArn
+
+  findingsOPTIONSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref findingsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'" 
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+
+
+  approvalPOSTMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref approvalResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${approvalCallbackFnArn}/invocations
+        - approvalCallbackFnArn: !ImportValue approvalCallbackFnArn
+
+  
+  approvalOPTIONSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref approvalResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'" 
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+
+  reportGETMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref reportResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${reportFnArn}/invocations
+        - reportFnArn: !ImportValue reportFnArn
+
+  
+  reportOPTIONSMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref restApi
+      ResourceId: !Ref reportResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'" 
+              method.response.header.Access-Control-Allow-Headers: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+
+
+  GatewayResponse4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+      ResponseType: DEFAULT_4XX 
+      RestApiId: !Ref restApi
+
+  GatewayResponse5XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+      ResponseType: DEFAULT_5XX 
+      RestApiId: !Ref restApi
+
+
+  deployment:
+    DependsOn: 
+       - findingsPOSTMethod
+       - findingsOPTIONSMethod
+       - approvalPOSTMethod
+       - approvalOPTIONSMethod
+       - reportGETMethod
+       - reportOPTIONSMethod
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref restApi
+
+  productionStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref restApi
+      DeploymentId: !Ref deployment
+      StageName: prod
+ 
+
+  ApiKey:
+    Type: 'AWS::ApiGateway::ApiKey'
+    DependsOn:
+      - productionStage
+    Properties:
+      Name: sentinel-api-key
+      Enabled: true
+
+  usagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: productionStage
+    Properties:
+      UsagePlanName: sentinel-usage-plan
+      ApiStages:
+        - ApiId: !Ref restApi
+          Stage: prod
+
+      Throttle:
+        RateLimit: 20
+        BurstLimit: 40
+      Quota:
+        Limit: 10000
+        Period: DAY
+
+  usagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref usagePlan
+
+
+  ingestLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !ImportValue ingestFnArn
+      Action: lambda:Invokefunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${restApi}/*/*/*"
+
+  approvalLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !ImportValue approvalCallbackFnArn
+      Action: lambda:Invokefunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${restApi}/*/*/*"
+
+  reportLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !ImportValue reportFnArn
+      Action: lambda:Invokefunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${restApi}/*/*/*"

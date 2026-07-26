@@ -1,0 +1,196 @@
+Parameters:
+  labRoleArn:
+    Type: String
+    Default: arn:aws:iam::153468302364:role/LabRole
+  artifactsBucket:
+    Type: String
+    Default: sentinel-artifacts-angger26
+
+
+Resources:
+  commonLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: sentinel-common-layer
+      CompatibleRuntimes: 
+        - python3.11
+      Content:  
+        S3Bucket: !Ref artifactsBucket
+        S3Key: layer.zip
+
+  ingestFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-ingest
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 256
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/ingest.zip
+      Environment:
+        Variables:
+          IDEMPOTENCY_TABLE: sentinel-idempotency
+          IDEMPOTENCY_TTL: 86400 
+
+  classifyFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-classify
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 128
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/classify.zip
+      Environment:
+        Variables:
+          APPROVAL_THRESHOLD: 50
+  
+  enrichFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-enrich
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 256
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/enrich.zip
+
+  complianceFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-compliance
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 256
+      Timeout: 60
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/compliance_check.zip
+
+  approvalFallbackFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-approvale-fallback
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 128
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/approval_callback.zip
+
+  reportFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-report
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 512
+      Timeout: 120
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/report.zip
+      Environment:
+        Variables:
+          FINDINGS_TABLE: sentinel-findings
+          ARTIFACTS_BUCKET: !Ref artifactsBucket
+          ALERTS_TOPIC_ARN: !ImportValue alertsTopicArn
+          STATUS_INDEX: status-index
+
+  initFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-init
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 512
+      Timeout: 120
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/init.zip
+
+      Environment:
+        Variables:
+          FINDINGS_TABLE: sentinel-findings
+          SCAN_INPUT_BUCKET: sentinel-scan-input-angger26
+
+  remediateFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-fn-remediate
+      Handler: handler.handler
+      Runtime: python3.11
+      Role:  !Ref labRoleArn
+      Layers:
+        - !Ref commonLayer
+      MemorySize: 512
+      Timeout: 60
+      Code:
+        S3Bucket: !Ref artifactsBucket
+        S3Key: functions/remediate.zip
+      Environment:
+        Variables:
+          REMEDIATE_VERSION: 1 
+          TARGET_BUCKET: sentinel-target-angger26
+
+
+  remediateVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref remediateFn
+  remediateAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref remediateFn
+      FunctionVersion: !GetAtt remediateVersion.Version
+      Name: live
+
+
+
+Outputs:
+  reportFnArn:
+    Value: !GetAtt reportFn.Arn
+    Export:
+      Name: reportFnArn
+  
+  ingestFnArn:
+    Value: !GetAtt ingestFn.Arn
+    Export:
+      Name: ingestFnArn
+
+  approvalCallbackFnArn:
+    Value: !GetAtt approvalFallbackFn.Arn
+    Export:
+      Name: approvalCallbackFnArn
+
+  
+
+
+  

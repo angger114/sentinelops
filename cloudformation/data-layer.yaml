@@ -1,0 +1,169 @@
+Resources:
+  findingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: sentinel-findings
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+          KMSMasterKeyId: !ImportValue sentinelKey
+      TimeToLiveSpecification: 
+        AttributeName: expiresAt
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: resourceId
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+           - AttributeName: status
+             KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+        - IndexName: resource-index
+          KeySchema:
+           - AttributeName: resourceId
+             KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  idempotencyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: sentinel-idempotency
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification: 
+        AttributeName: expiresAt
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: idempotencyKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: idempotencyKey
+          KeyType: HASH
+
+# S3 Bucket
+  scanInputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: sentinel-scan-input-angger26
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault: 
+                KMSMasterKeyID: !ImportValue sentinelKey
+                SSEAlgorithm: aws:kms
+
+  artifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: sentinel-artifacts-angger26
+      VersioningConfiguration:
+        Status: Enabled
+  
+  targetBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: sentinel-target-angger26
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+      VersioningConfiguration:
+        Status: Enabled
+
+# message, secrets and config
+  alertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: sentinel-alerts-topic
+      Subscription:
+        - Protocol: email
+          Endpoint: anggerbektian114@gmail.com
+  
+  approvalDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sentinel-approval-dlq
+
+  approvalQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sentinel-approval-queue
+      VisibilityTimeout: 3900
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt approvalDLQ.Arn
+        maxReceiveCount: 3
+
+  secrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: sentinel-secret-config
+      KmsKeyId: !ImportValue sentinelKey
+      SecretString: | 
+        {
+          "approvalThreshold": 50,
+          "maxConcurrency": 5,
+          "environment": "lks-lab"
+        }
+
+  ssmApprovalThreshold:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: "/sentinel/config/approval_threshold"
+      Type: String
+      Value: "50"
+
+  ssmToleratedFailure:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: "/sentinel/config/tolerated_failure_pct"
+      Type: String
+      Value: "20"
+
+
+Outputs:
+  alertsTopicArn:  
+    Value: !Ref alertsTopic
+    Export:
+      Name: alertsTopicArn
+  
+
+
+  
+
+
+
+  
+
+
+
+
+
+  
+
+
+
+      
+
+
+      

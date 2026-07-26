@@ -1,0 +1,50 @@
+Resources:
+  CMK:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Root
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: LabRoleUse
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
+
+  CMKALias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: 'alias/sentinel-key'
+      TargetKeyId: !Ref CMK
+
+  backupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: sentinel-vault
+      EncryptionKeyArn: !GetAtt CMK.Arn
+
+Outputs:
+  sentinelKey:
+    Value: !Ref CMK
+    Export:
+      Name: sentinelKey
+
+  sentinelKeyArn:
+    Value: !GetAtt CMK.Arn
+    Export:
+      Name: sentinelKeyArn
+  
